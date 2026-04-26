@@ -1,10 +1,10 @@
 @echo off
-echo Installing PyInstaller...
-pip install pyinstaller
+echo Installing dependencies...
+pip install pyinstaller pystray Pillow
 
 echo.
 echo Building exe...
-pyinstaller --onefile --name GibrishToHeb gibrish_to_heb.py
+pyinstaller GibrishToHeb.spec
 if errorlevel 1 (
     echo ERROR: PyInstaller build failed.
     pause

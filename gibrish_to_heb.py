@@ -9,6 +9,10 @@ import pyperclip
 import tkinter as tk
 from tkinter import messagebox
 import threading
+import pystray
+from PIL import Image, ImageDraw, ImageFont
+import json
+import os
 
 # QWERTY to Hebrew keyboard mapping
 # Based on standard Hebrew keyboard layout (QWERTY positions to Hebrew letters)
@@ -56,179 +60,425 @@ QWERTY_TO_HEBREW = {
     '=': '=', '+': '+',
 }
 
+# ---------------------------------------------------------------------------
+# Config persistence
+# ---------------------------------------------------------------------------
+
+CONFIG_PATH = os.path.join(
+    os.environ.get('APPDATA', os.path.expanduser('~')),
+    'GibrishToHeb', 'config.json'
+)
+DEFAULT_HOTKEY = 'f8'
+
+def load_hotkey():
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            return json.load(f).get('hotkey', DEFAULT_HOTKEY)
+    except Exception:
+        return DEFAULT_HOTKEY
+
+def save_hotkey(hotkey):
+    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    with open(CONFIG_PATH, 'w') as f:
+        json.dump({'hotkey': hotkey}, f)
+
+# ---------------------------------------------------------------------------
+# Mutable app state (shared between tray callbacks and hotkey logic)
+# ---------------------------------------------------------------------------
+
+state = {
+    'hotkey': DEFAULT_HOTKEY,
+    'icon': None,           # set in main() after icon is created
+    'dialog_open': False,   # True while the Change Hotkey dialog is visible
+}
+
+# ---------------------------------------------------------------------------
+# Core transformation
+# ---------------------------------------------------------------------------
+
 def transform_to_hebrew(text):
-    """
-    Transform QWERTY-typed text to Hebrew letters
-    """
     result = []
     for char in text:
         if char in QWERTY_TO_HEBREW:
             hebrew_char = QWERTY_TO_HEBREW[char]
             result.append(hebrew_char if hebrew_char else char)
-        elif char.isspace():
-            result.append(char)  # Preserve spaces
-        elif char.isdigit():
-            result.append(char)  # Preserve numbers
+        elif char.isspace() or char.isdigit():
+            result.append(char)
         else:
-            result.append(char)  # Keep unknown characters as-is
+            result.append(char)
     return ''.join(result)
 
+# ---------------------------------------------------------------------------
+# Transform dialog (F8 / current hotkey)
+# ---------------------------------------------------------------------------
+
 def show_transform_menu():
-    """Show a popup menu to transform selected text"""
     import time
-    
-    # Get current clipboard content (to restore later if needed)
+
     try:
         original_clipboard = pyperclip.paste()
-    except:
+    except Exception:
         original_clipboard = ""
-    
-    # Store the original selected text by copying it
-    # We use Ctrl+C which typically preserves selection in most Windows apps
+
+    # Release any modifiers still physically held from the hotkey (e.g. Alt+F8)
+    # so that the injected Ctrl+C isn't seen as Ctrl+Alt+C by the OS.
+    for mod in ('alt', 'ctrl', 'shift', 'left windows', 'right windows'):
+        try:
+            if keyboard.is_pressed(mod):
+                keyboard.release(mod)
+        except Exception:
+            pass
+    time.sleep(0.05)  # let the OS process the releases
+
     keyboard.send('ctrl+c')
-    
-    # Wait a bit for clipboard to update
-    time.sleep(0.15)
-    
-    # Get the copied text
+
+    # Poll until the clipboard changes, or give up after ~300 ms
+    selected_text = original_clipboard
+    for _ in range(6):
+        time.sleep(0.05)
+        candidate = pyperclip.paste()
+        if candidate != original_clipboard:
+            selected_text = candidate
+            break
+
     try:
-        selected_text = pyperclip.paste()
-        
-        if not selected_text or not selected_text.strip():
-            # Create a simple info window
+        if not selected_text or not selected_text.strip() or selected_text == original_clipboard:
             root = tk.Tk()
             root.withdraw()
             root.attributes('-topmost', True)
-            messagebox.showinfo("Info", "No text selected.\n\nPlease select text and press F8 again.")
+            hotkey_display = state['hotkey'].upper()
+            messagebox.showinfo(
+                "Info",
+                f"No text selected.\n\nPlease select text and press {hotkey_display} again."
+            )
             root.destroy()
             return
-        
-        # Create popup window with transform option
+
+        hebrew_text = transform_to_hebrew(selected_text)
+
         root = tk.Tk()
         root.title("Transform to Hebrew")
         root.attributes('-topmost', True)
         root.resizable(False, False)
-        
-        # Center the window
+
         root.update_idletasks()
-        width = 400
-        height = 150
+        width = 420
+        height = 160
         x = (root.winfo_screenwidth() // 2) - (width // 2)
         y = (root.winfo_screenheight() // 2) - (height // 2)
         root.geometry(f'{width}x{height}+{x}+{y}')
-        
-        # Show preview of selected text (truncated)
-        preview_text = selected_text[:60] + ('...' if len(selected_text) > 60 else '')
-        preview_label = tk.Label(
-            root, 
-            text=f"Selected text:\n{preview_text}",
-            wraplength=350,
-            justify='left',
-            padx=10,
-            pady=5
-        )
-        preview_label.pack(pady=5)
-        
+
+        def truncate(s, n=55):
+            return s[:n] + ('...' if len(s) > n else '')
+
+        preview_frame = tk.Frame(root, padx=12, pady=8)
+        preview_frame.pack(fill='x')
+
+        tk.Label(
+            preview_frame,
+            text=truncate(selected_text),
+            anchor='w', justify='left',
+            font=('Arial', 10),
+        ).pack(fill='x')
+        tk.Label(
+            preview_frame,
+            text='↓',
+            anchor='w',
+            font=('Arial', 10),
+        ).pack(fill='x')
+        tk.Label(
+            preview_frame,
+            text=truncate(hebrew_text),
+            anchor='e', justify='right',
+            font=('Arial', 10),
+        ).pack(fill='x')
+
         def perform_transform():
             try:
-                # Transform the text
-                hebrew_text = transform_to_hebrew(selected_text)
-                
-                # Copy transformed text to clipboard
                 pyperclip.copy(hebrew_text)
-                
-                # Close the menu window first to return focus to the original application
                 root.destroy()
-                
-                # Give a small delay for the window to close and focus to return to the original app
                 time.sleep(0.25)
-                
-                # Replace the selected text with transformed text
-                # Strategy: Delete key removes selected text (if selection still exists)
-                # Then paste the transformed text
-                # This works in most Windows applications
                 keyboard.send('delete')
                 time.sleep(0.08)
                 keyboard.send('ctrl+v')
-                
             except Exception as e:
                 root.destroy()
                 error_root = tk.Tk()
                 error_root.withdraw()
                 error_root.attributes('-topmost', True)
-                messagebox.showerror("Error", f"An error occurred:\n{str(e)}", parent=error_root)
+                messagebox.showerror("Error", f"An error occurred:\n{str(e)}")
                 error_root.destroy()
-                # Restore original clipboard on error
                 pyperclip.copy(original_clipboard)
-        
+
         def cancel():
-            # Restore original clipboard
             pyperclip.copy(original_clipboard)
             root.destroy()
-        
-        # Transform button
-        transform_btn = tk.Button(
-            root,
-            text="Transform to Hebrew",
-            command=perform_transform,
-            bg='#4CAF50',
-            fg='white',
-            font=('Arial', 11, 'bold'),
-            padx=20,
-            pady=5
-        )
-        transform_btn.pack(pady=5)
-        
-        # Cancel button
-        cancel_btn = tk.Button(
-            root,
-            text="Cancel",
-            command=cancel,
-            padx=20,
-            pady=5
-        )
-        cancel_btn.pack(pady=5)
-        
-        # Make Enter key trigger transform, Escape to cancel
+
+        btn_frame = tk.Frame(root)
+        btn_frame.pack(pady=6)
+        tk.Button(
+            btn_frame, text="בצע", command=perform_transform,
+            bg='#4CAF50', fg='white', font=('Arial', 11, 'bold'),
+            padx=20, pady=4,
+        ).pack(side='left', padx=6)
+        tk.Button(
+            btn_frame, text="בטל", command=cancel,
+            padx=20, pady=4,
+        ).pack(side='left', padx=6)
+
         root.bind('<Return>', lambda e: perform_transform())
         root.bind('<Escape>', lambda e: cancel())
-        transform_btn.focus_set()
-        
+
         root.mainloop()
-    
+
     except Exception as e:
         error_root = tk.Tk()
         error_root.withdraw()
         error_root.attributes('-topmost', True)
-        messagebox.showerror("Error", f"An error occurred:\n{str(e)}", parent=error_root)
+        messagebox.showerror("Error", f"An error occurred:\n{str(e)}")
         error_root.destroy()
-        # Restore original clipboard on error
         pyperclip.copy(original_clipboard)
 
 def on_hotkey_pressed():
-    """Callback when F8 is pressed"""
-    # Run in a separate thread to avoid blocking
+    if state['dialog_open']:
+        return
     thread = threading.Thread(target=show_transform_menu, daemon=True)
     thread.start()
 
-def main():
-    """Main function to set up hotkey and run the utility"""
-    print("Gibrish to Hebrew Transformer")
-    print("Press F8 to transform selected text to Hebrew")
-    print("Press Ctrl+C to exit")
-    
-    # Register F8 hotkey
-    keyboard.add_hotkey('f8', on_hotkey_pressed)
-    
+# ---------------------------------------------------------------------------
+# Change Hotkey dialog
+# ---------------------------------------------------------------------------
+
+# Tkinter keysym → keyboard-library name for keys that differ
+_KEYSYM_MAP = {
+    'return': 'enter',
+    'prior': 'page_up',
+    'next': 'page_down',
+    'escape': 'esc',
+    'backspace': 'backspace',
+    'tab': 'tab',
+    'space': 'space',
+    'home': 'home',
+    'end': 'end',
+    'delete': 'delete',
+    'insert': 'insert',
+    'up': 'up',
+    'down': 'down',
+    'left': 'left',
+    'right': 'right',
+    'print': 'print_screen',
+    'scroll_lock': 'scroll_lock',
+    'pause': 'pause',
+    'num_lock': 'num_lock',
+}
+
+# Keys that are modifiers themselves — ignore as the sole key
+_MODIFIER_KEYSYMS = {
+    'control_l', 'control_r', 'shift_l', 'shift_r',
+    'alt_l', 'alt_r', 'super_l', 'super_r',
+    'meta_l', 'meta_r', 'caps_lock', 'mode_switch',
+}
+
+# Keys that must not be used as a bare hotkey (without a modifier)
+_BARE_BLOCKED = {
+    'home', 'end', 'delete', 'backspace', 'insert',
+    'print_screen', 'scroll_lock', 'pause', 'num_lock',
+    'space', 'tab', 'enter', 'esc',
+    'up', 'down', 'left', 'right',
+    'page_up', 'page_down',
+    # punctuation / numpad symbols (Tkinter returns full names, not single chars)
+    'slash', 'asterisk', 'minus', 'plus',
+    'kp_divide', 'kp_multiply', 'kp_subtract', 'kp_add',
+}
+
+def _parse_tkinter_event(event):
+    """Convert a Tkinter KeyPress event into a keyboard-library hotkey string."""
+    keysym = event.keysym.lower()
+    if keysym in _MODIFIER_KEYSYMS:
+        return None  # lone modifier, ignore
+
+    parts = []
+    if event.state & 0x4:    # Ctrl
+        parts.append('ctrl')
+    if event.state & 0x1:    # Shift
+        parts.append('shift')
+    if event.state & 0x20000:  # Alt (Windows Tkinter)
+        parts.append('alt')
+
+    key = _KEYSYM_MAP.get(keysym, keysym)
+
+    # Reject bare regular characters (letters, digits, punctuation) with no modifier.
+    # Also reject the explicitly blocked special keys above.
+    if not parts and (len(key) == 1 or key in _BARE_BLOCKED):
+        return None
+
+    parts.append(key)
+    return '+'.join(parts)
+
+
+def show_change_hotkey_dialog():
+    state['dialog_open'] = True
+    root = tk.Tk()
+    root.title("Change Hotkey")
+    root.attributes('-topmost', True)
+    root.resizable(False, False)
+
+    root.update_idletasks()
+    width, height = 340, 170
+    x = (root.winfo_screenwidth() // 2) - (width // 2)
+    y = (root.winfo_screenheight() // 2) - (height // 2)
+    root.geometry(f'{width}x{height}+{x}+{y}')
+
+    captured = [state['hotkey']]   # mutable, updated by key capture
+
+    tk.Label(root, text="Press the key combination you want to use:",
+             font=('Arial', 10), pady=6).pack()
+
+    display_var = tk.StringVar(value=state['hotkey'].upper())
+    display_label = tk.Label(
+        root,
+        textvariable=display_var,
+        font=('Arial', 14, 'bold'),
+        relief='sunken',
+        width=18,
+        pady=6,
+        cursor='xterm',
+    )
+    display_label.pack(padx=20, pady=4)
+    display_label.focus_set()
+
+    def on_key(event):
+        hotkey = _parse_tkinter_event(event)
+        if hotkey:
+            captured[0] = hotkey
+            display_var.set(hotkey.upper())
+
+    display_label.bind('<KeyPress>', on_key)
+    display_label.bind('<Escape>', lambda e: cancel())
+
+    def save():
+        state['dialog_open'] = False
+        new_hotkey = captured[0]
+        root.destroy()
+        _apply_new_hotkey(new_hotkey)
+
+    def cancel():
+        state['dialog_open'] = False
+        root.destroy()
+
+    btn_frame = tk.Frame(root)
+    btn_frame.pack(pady=10)
+    tk.Button(
+        btn_frame, text="Save", command=save,
+        bg='#4CAF50', fg='white', font=('Arial', 10, 'bold'),
+        padx=16,
+    ).pack(side='left', padx=6)
+    tk.Button(
+        btn_frame, text="Cancel", command=cancel,
+        padx=16,
+    ).pack(side='left', padx=6)
+
+    root.bind('<Escape>', lambda e: cancel())
+    root.mainloop()
+
+
+def _apply_new_hotkey(new_hotkey):
+    """Re-register the keyboard hook and persist the new hotkey."""
     try:
-        # Keep the program running
-        keyboard.wait('ctrl+c')
-    except KeyboardInterrupt:
-        print("\nExiting...")
-    finally:
+        keyboard.remove_hotkey(state['hotkey'])
+    except Exception:
         keyboard.unhook_all()
+
+    state['hotkey'] = new_hotkey
+    keyboard.add_hotkey(new_hotkey, on_hotkey_pressed)
+    save_hotkey(new_hotkey)
+
+    # Update tray tooltip and force menu label refresh
+    if state['icon']:
+        state['icon'].title = f'Gibrish to Hebrew ({new_hotkey.upper()})'
+        state['icon'].update_menu()
+
+
+def on_change_hotkey(icon, item):
+    thread = threading.Thread(target=show_change_hotkey_dialog, daemon=True)
+    thread.start()
+
+# ---------------------------------------------------------------------------
+# Instructions dialog
+# ---------------------------------------------------------------------------
+
+def show_instructions_dialog():
+    hotkey = state['hotkey'].upper()
+    text = (
+        "הוראות שימוש:\n\n"
+        "  1. בחר טקסט בכל יישום\n"
+        "  2. לחץ על מקש הקיצור לפתיחת חלון ההמרה\n"
+        "  3. לחץ \"בצע\" לביצוע ההמרה, או \"בטל\" לביטול\n"
+        "  4. הטקסט יוחלף אוטומטית באותיות עבריות\n\n"
+        "התוכנית פועלת ברקע כאייקון במגש המערכת.\n"
+        "לחיצה ימנית על האייקון מאפשרת שינוי מקש הקיצור או יציאה מהתוכנית.\n\n"
+        f"מקש הקיצור שנבחר: {hotkey}"
+    )
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    messagebox.showinfo("הוראות שימוש", text)
+    root.destroy()
+
+def on_instructions(icon, item):
+    thread = threading.Thread(target=show_instructions_dialog, daemon=True)
+    thread.start()
+
+# ---------------------------------------------------------------------------
+# Tray icon
+# ---------------------------------------------------------------------------
+
+def create_tray_icon_image():
+    size = 64
+    img = Image.new('RGB', (size, size), color=(45, 45, 45))
+    draw = ImageDraw.Draw(img)
+    draw.ellipse([4, 4, 60, 60], fill=(76, 175, 80))
+    try:
+        font = ImageFont.truetype('arial.ttf', 36)
+        draw.text((18, 12), 'ה', font=font, fill=(255, 255, 255))
+    except Exception:
+        font = ImageFont.load_default()
+        draw.text((26, 24), 'H', font=font, fill=(255, 255, 255))
+    return img
+
+
+def main():
+    state['hotkey'] = load_hotkey()
+    keyboard.add_hotkey(state['hotkey'], on_hotkey_pressed)
+
+    def on_exit(icon, item):
+        keyboard.unhook_all()
+        icon.stop()
+
+    # Use a callable for the label so it always reflects the current hotkey
+    menu = pystray.Menu(
+        pystray.MenuItem(
+            lambda item: f"Gibrish \u2192 Hebrew  ({state['hotkey'].upper()})",
+            None, enabled=False
+        ),
+        pystray.MenuItem('Change Hotkey', on_change_hotkey),
+        pystray.MenuItem('Instructions', on_instructions),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem('Exit', on_exit),
+    )
+    icon = pystray.Icon(
+        name='GibrishToHeb',
+        icon=create_tray_icon_image(),
+        title=f"Gibrish to Hebrew ({state['hotkey'].upper()})",
+        menu=menu,
+    )
+    state['icon'] = icon
+
+    try:
+        icon.run()
+    except KeyboardInterrupt:
+        keyboard.unhook_all()
+
 
 if __name__ == "__main__":
     main()
-
-
