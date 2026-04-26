@@ -1,13 +1,13 @@
 # Gibrish to Hebrew Text Transformer
 
-A Windows utility that transforms QWERTY-typed text to Hebrew letters. This is useful when you accidentally typed Hebrew text with the keyboard set to English or with Caps Lock enabled.
+A Windows utility that transforms QWERTY-typed text to Hebrew letters. Useful when you accidentally typed Hebrew text with the keyboard set to English or with Caps Lock enabled.
 
 ## Features
 
-- **Hotkey activation**: Press F8 to activate the transformation menu
-- **Quick transformation**: Select text, press F8, and choose "Transform to Hebrew"
-- **Resident utility**: Runs in the background and stays active
-- **QWERTY to Hebrew mapping**: Automatically converts English QWERTY keyboard positions to Hebrew letters
+- **System tray icon**: Runs silently in the background as a tray icon (green circle with ה)
+- **Configurable hotkey**: Default is F8; change it any time from the tray menu — persisted across restarts
+- **Transform preview**: Before replacing, shows original → Hebrew so you can confirm or cancel
+- **QWERTY to Hebrew mapping**: Converts English QWERTY keyboard positions to Hebrew letters
 
 ## Quick Start (No Python Required)
 
@@ -20,49 +20,59 @@ Download `GibrishToHeb_Setup.exe` and run it. The installer will:
 
 ---
 
-## Installation (from source)
-
-1. Make sure you have Python 3.7 or higher installed
-2. Install the required dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
 ## Usage
 
-1. Run the utility:
-   ```bash
-   python gibrish_to_heb.py
-   ```
+1. Select the text you want to transform in any application.
+2. Press the hotkey (default **F8**) to open the transform dialog.
+3. A preview shows the original text and the Hebrew result.
+4. Click **בצע** (or press Enter) to replace the text, or **בטל** (or Escape) to cancel.
 
-2. Select the text you want to transform in any application
+## Tray Icon
 
-3. Press **F8** to open the transformation menu
+Right-click the tray icon for these options:
 
-4. Click "Transform to Hebrew" or press Enter to transform the selected text
+| Option | Description |
+|---|---|
+| **Change Hotkey** | Opens a dialog — just press the key combination you want, then Save. Supports F-keys, Ctrl/Alt/Shift combos, etc. |
+| **Instructions** | Shows usage instructions in Hebrew |
+| **Exit** | Quits the program |
 
-5. The text will be automatically replaced with Hebrew letters based on QWERTY keyboard positions
+The tray tooltip always shows the currently active hotkey, e.g. `Gibrish to Hebrew (F8)`.
+
+## Hotkey Rules
+
+- **Bare F-keys** (F1–F12) are allowed.
+- **Modifier combos** (Ctrl+, Alt+, Shift+) with any key are allowed.
+- **Bare letters, digits, arrow keys, Backspace, Enter, Esc, Space, Tab** are blocked to avoid conflicting with normal typing.
+- The chosen hotkey is saved to `%APPDATA%\GibrishToHeb\config.json` and reloaded on next launch.
 
 ## Example
 
-If you typed `aukji` (intending to write "שולחן" but with English keyboard), the utility will transform it correctly.
+If you typed `aukji` intending to write `שולחן` (with the wrong keyboard language), the utility converts it correctly.
 
 ## Keyboard Mapping
 
-The utility maps QWERTY keyboard positions to Hebrew letters based on the standard Hebrew keyboard layout:
-- `a` → `ש`, `s` → `ד`, `d` → `ג`, `f` → `כ`, etc.
-- Numbers, spaces, and punctuation are preserved
-- Works with both uppercase and lowercase letters
+Based on the standard Hebrew keyboard layout:
+- `a` → `ש`, `s` → `ד`, `d` → `ג`, `f` → `כ`, `g` → `ע` …
+- Numbers, spaces, and unrecognised characters are preserved as-is.
+- Both uppercase and lowercase input map to the same Hebrew letter.
 
 ## Requirements
 
-- Python 3.7+
 - Windows OS
-- Administrator privileges (required for keyboard hook on some systems)
+- Administrator privileges may be required for global hotkey detection
 
-## Exit
+## Installation (from source)
 
-Press **Ctrl+C** in the terminal to exit the utility.
+1. Python 3.7+ with pip
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Run:
+   ```bash
+   python gibrish_to_heb.py
+   ```
 
 ## Building from Source
 
@@ -80,8 +90,3 @@ This will:
 2. Compile `dist\GibrishToHeb_Setup.exe` via Inno Setup
 
 > **Antivirus note:** PyInstaller-packed executables are sometimes flagged by AV software as a false positive. The file is safe.
-
-## Note
-
-On first run, Windows may prompt for administrator permissions as the keyboard library requires elevated privileges to register global hotkeys.
-
