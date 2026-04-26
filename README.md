@@ -9,7 +9,18 @@ A Windows utility that transforms QWERTY-typed text to Hebrew letters. This is u
 - **Resident utility**: Runs in the background and stays active
 - **QWERTY to Hebrew mapping**: Automatically converts English QWERTY keyboard positions to Hebrew letters
 
-## Installation
+## Quick Start (No Python Required)
+
+Download `GibrishToHeb_Setup.exe` and run it. The installer will:
+- Install the program to your user profile (no admin required)
+- Add it to Windows startup so it runs automatically on login
+- Create a Start Menu shortcut and an uninstaller
+
+> **Note:** Windows may ask for administrator privileges on first run. This is required for global hotkey detection.
+
+---
+
+## Installation (from source)
 
 1. Make sure you have Python 3.7 or higher installed
 2. Install the required dependencies:
@@ -52,6 +63,23 @@ The utility maps QWERTY keyboard positions to Hebrew letters based on the standa
 ## Exit
 
 Press **Ctrl+C** in the terminal to exit the utility.
+
+## Building from Source
+
+**Prerequisites (build machine only):**
+- Python 3.7+ with pip
+- [Inno Setup 6](https://jrsoftware.org/isdl.php) (free) — only needed to build the installer
+
+Run:
+```bash
+build.bat
+```
+
+This will:
+1. Build the exe via PyInstaller
+2. Compile `dist\GibrishToHeb_Setup.exe` via Inno Setup
+
+> **Antivirus note:** PyInstaller-packed executables are sometimes flagged by AV software as a false positive. The file is safe.
 
 ## Note
 
