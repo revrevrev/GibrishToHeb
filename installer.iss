@@ -9,6 +9,8 @@ DefaultGroupName=GibrishToHeb
 UninstallDisplayIcon={app}\GibrishToHeb.exe
 Compression=lzma2
 SolidCompression=yes
+; Suppress the built-in "close applications" dialog — we handle it in [Code]
+CloseApplications=no
 OutputDir=dist
 OutputBaseFilename=GibrishToHeb_Setup
 ; No admin rights needed - installs to user's AppData
@@ -35,7 +37,7 @@ Filename: "{app}\GibrishToHeb.exe"; \
   Flags: postinstall nowait skipifsilent
 
 [Messages]
-FinishedLabel=ההתקנה הושלמה בהצלחה!%n%nהוראות שימוש:%n%n  1. בחר טקסט בכל יישום%n  2. לחץ על מקש הקיצור לפתיחת חלון ההמרה%n  3. לחץ "בצע" לביצוע ההמרה, או "בטל" לביטול%n  4. הטקסט יוחלף אוטומטית באותיות עבריות%n%nהתוכנית פועלת ברקע כאייקון במגש המערכת.%nלחיצה ימנית על האייקון מאפשרת שינוי מקש הקיצור או יציאה מהתוכנית.%n%nמקש הקיצור שנבחר: {code:GetHotkeyValue}
+FinishedLabel=ההתקנה הושלמה בהצלחה!
 
 [Code]
 
@@ -101,11 +103,39 @@ begin
   HotkeyCombo.ItemIndex := 0;
 end;
 
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = wpFinished then
+  begin
+    WizardForm.FinishedLabel.AutoSize := True;
+    WizardForm.FinishedLabel.Caption :=
+      'ההתקנה הושלמה בהצלחה!' + #13#10 + #13#10 +
+      'הוראות שימוש:' + #13#10 + #13#10 +
+      '  1. בחר טקסט בכל יישום' + #13#10 +
+      '  2. לחץ על מקש הקיצור לפתיחת חלון ההמרה' + #13#10 +
+      '  3. לחץ "בצע" לביצוע ההמרה, או "בטל" לביטול' + #13#10 +
+      '  4. הטקסט יוחלף אוטומטית באותיות עבריות' + #13#10 + #13#10 +
+      'התוכנית פועלת ברקע כאייקון במגש המערכת.' + #13#10 +
+      'לחיצה ימנית על האייקון מאפשרת שינוי מקש הקיצור או יציאה מהתוכנית.' + #13#10 + #13#10 +
+      'מקש הקיצור שנבחר: ' + GetHotkeyValue('');
+  end;
+end;
+
 { Write config.json with the chosen hotkey after files are installed }
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ConfigDir, ConfigFile, ConfigContent: String;
+  ResultCode: Integer;
 begin
+  if CurStep = ssInstall then
+  begin
+    { Silently kill any running instance so the EXE file can be replaced.
+      taskkill exits with 128 when the process isn't found — that's fine. }
+    ShellExec('', ExpandConstant('{sys}\taskkill.exe'), '/F /IM GibrishToHeb.exe',
+              '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(500);  { Give Windows time to release the file handle }
+  end;
+
   if CurStep = ssPostInstall then
   begin
     ConfigDir     := ExpandConstant('{userappdata}\GibrishToHeb');

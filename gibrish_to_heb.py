@@ -25,8 +25,8 @@ QWERTY_TO_HEBREW = {
     't': 'א', 'T': 'א',
     'y': 'ט', 'Y': 'ט',
     'u': 'ו', 'U': 'ו',
-    'i': 'י', 'I': 'י',
-    'o': 'ן', 'O': 'ן',
+    'i': 'ן', 'I': 'ן',
+    'o': 'ם', 'O': 'ם',
     'p': 'פ', 'P': 'פ',
     # Second row
     'a': 'ש', 'A': 'ש',
@@ -49,7 +49,7 @@ QWERTY_TO_HEBREW = {
     # Punctuation
     ',': 'ת', '<': 'ת',
     '.': 'ץ', '>': 'ץ',
-    '/': '.', '?': '.',
+    '/': '.',
     ';': 'ף', ':': 'ף',
     "'": ',', '"': ',',
     '[': ']', '{': '}',
@@ -114,31 +114,39 @@ def transform_to_hebrew(text):
 
 def show_transform_menu():
     import time
+    import ctypes
 
     try:
         original_clipboard = pyperclip.paste()
     except Exception:
         original_clipboard = ""
 
-    # Release any modifiers still physically held from the hotkey (e.g. Alt+F8)
-    # so that the injected Ctrl+C isn't seen as Ctrl+Alt+C by the OS.
+    # Release any modifiers still held from the hotkey so the injected Ctrl+C
+    # isn't seen as e.g. Ctrl+Alt+C by the target app.
     for mod in ('alt', 'ctrl', 'shift', 'left windows', 'right windows'):
         try:
             if keyboard.is_pressed(mod):
                 keyboard.release(mod)
         except Exception:
             pass
-    time.sleep(0.05)  # let the OS process the releases
+    time.sleep(0.05)
+
+    user32 = ctypes.windll.user32
+    seq_before = user32.GetClipboardSequenceNumber()
 
     keyboard.send('ctrl+c')
 
-    # Poll until the clipboard changes, or give up after ~300 ms
+    # Poll until Windows registers a clipboard write (sequence number changes),
+    # or give up after ~1000 ms.  Using the sequence number is reliable even
+    # when the selected text happens to equal the previous clipboard content.
     selected_text = original_clipboard
-    for _ in range(6):
+    for _ in range(20):
         time.sleep(0.05)
-        candidate = pyperclip.paste()
-        if candidate != original_clipboard:
-            selected_text = candidate
+        if user32.GetClipboardSequenceNumber() != seq_before:
+            try:
+                selected_text = pyperclip.paste()
+            except Exception:
+                selected_text = original_clipboard
             break
 
     try:
@@ -156,51 +164,123 @@ def show_transform_menu():
 
         hebrew_text = transform_to_hebrew(selected_text)
 
+        # ── Design tokens (from HTML reference) ───────────────────────
+        SURFACE    = '#FFFFFF'
+        BORDER     = '#D8DAE3'
+        SOURCE_BG  = '#F4F5F8'
+        SRC_FG     = '#6B7080'
+        MUTED      = '#8B8FA8'
+        TEXT_COLOR = '#1E2030'
+        ACCENT     = '#3B5BDB'
+        ACCENT_DK  = '#2F4DC8'
+        ACCENT_LT  = '#E8EEFF'
+        WIN_W      = 520
+
         root = tk.Tk()
-        root.title("Transform to Hebrew")
+        root.title("המרת כתיב גיבריש לעברית")
+        root.configure(bg=SURFACE)
         root.attributes('-topmost', True)
         root.resizable(False, False)
 
-        root.update_idletasks()
-        width = 420
-        height = 160
-        x = (root.winfo_screenwidth() // 2) - (width // 2)
-        y = (root.winfo_screenheight() // 2) - (height // 2)
-        root.geometry(f'{width}x{height}+{x}+{y}')
+        # ── Header ────────────────────────────────────────────────────
+        header = tk.Frame(root, bg=SURFACE, padx=24, pady=20)
+        header.pack(fill='x')
 
-        def truncate(s, n=55):
-            return s[:n] + ('...' if len(s) > n else '')
-
-        preview_frame = tk.Frame(root, padx=12, pady=8)
-        preview_frame.pack(fill='x')
+        # Icon badge (32×32, accent-lt bg, canvas-drawn icon)
+        badge = tk.Canvas(header, width=32, height=32,
+                          bg=ACCENT_LT, highlightthickness=0, bd=0)
+        badge.pack(side='left')
+        # Left three horizontal lines (document/text icon)
+        for y_pos in (9, 16, 23):
+            badge.create_line(5, y_pos, 16 if y_pos == 9 else (14 if y_pos == 16 else 11),
+                              y_pos, fill=ACCENT, width=2, capstyle='round')
+        # Right aleph-like shape
+        badge.create_line(22, 7,  28, 19, fill=ACCENT, width=2, capstyle='round')
+        badge.create_line(22, 7,  16, 19, fill=ACCENT, width=2, capstyle='round')
+        badge.create_line(17, 14, 27, 14, fill=ACCENT, width=2, capstyle='round')
 
         tk.Label(
-            preview_frame,
-            text=truncate(selected_text),
-            anchor='w', justify='left',
-            font=('Arial', 10),
-        ).pack(fill='x')
-        tk.Label(
-            preview_frame,
-            text='↓',
+            header, text='המרת כתיב גיבריש לעברית',
+            bg=SURFACE, fg=TEXT_COLOR,
+            font=('Segoe UI', 12, 'bold'),
             anchor='w',
-            font=('Arial', 10),
-        ).pack(fill='x')
-        tk.Label(
-            preview_frame,
-            text=truncate(hebrew_text),
-            anchor='e', justify='right',
-            font=('Arial', 10),
-        ).pack(fill='x')
+        ).pack(side='left', padx=(10, 0))
+
+        tk.Frame(root, bg=BORDER, height=1).pack(fill='x')
+
+        # ── Body ──────────────────────────────────────────────────────
+        body = tk.Frame(root, bg=SURFACE, padx=24, pady=20)
+        body.pack(fill='x')
+
+        # Source block
+        src_border = tk.Frame(body, bg=BORDER)
+        src_border.pack(fill='x')
+        src_inner = tk.Frame(src_border, bg=SOURCE_BG, padx=14, pady=12)
+        src_inner.pack(fill='x', padx=1, pady=1)
+
+        src_h = min(max(1, selected_text.count('\n') + 1), 4)
+        src_widget = tk.Text(
+            src_inner, height=src_h,
+            bg=SOURCE_BG, fg=SRC_FG,
+            font=('Segoe UI', 10),
+            wrap='word', relief='flat', bd=0, highlightthickness=0,
+            cursor='arrow', padx=0, pady=0, spacing1=2, spacing3=2,
+        )
+        src_widget.insert('1.0', selected_text)
+        src_widget.configure(state='disabled')
+        src_widget.pack(fill='x')
+
+        # Arrow divider with horizontal rules
+        div = tk.Frame(body, bg=SURFACE)
+        div.pack(fill='x', pady=10)
+        div.columnconfigure(0, weight=1)
+        div.columnconfigure(2, weight=1)
+        tk.Frame(div, bg=BORDER, height=1).grid(row=0, column=0, sticky='ew', pady=6)
+        tk.Label(div, text='↓', bg=SURFACE, fg=MUTED,
+                 font=('Segoe UI', 11)).grid(row=0, column=1, padx=8)
+        tk.Frame(div, bg=BORDER, height=1).grid(row=0, column=2, sticky='ew', pady=6)
+
+        # Result block (editable)
+        res_border = tk.Frame(body, bg=ACCENT)
+        res_border.pack(fill='x')
+        res_inner = tk.Frame(res_border, bg=ACCENT_LT, padx=14, pady=12)
+        res_inner.pack(fill='x', padx=2, pady=2)
+
+        heb_h = min(max(2, hebrew_text.count('\n') + 2), 5)
+        result_widget = tk.Text(
+            res_inner, height=heb_h,
+            bg=ACCENT_LT, fg=TEXT_COLOR,
+            font=('David', 14),  # Windows Hebrew system font
+            wrap='word', relief='flat', bd=0, highlightthickness=0,
+            cursor='xterm', padx=0, pady=0, spacing1=2, spacing3=4,
+            insertbackground=ACCENT,
+        )
+        result_widget.tag_configure('rtl', justify='right')
+        result_widget.insert('1.0', hebrew_text)
+        result_widget.tag_add('rtl', '1.0', 'end')
+        result_widget.pack(fill='x')
+        result_widget.focus_set()
+        result_widget.mark_set('insert', 'end')
+
+        tk.Frame(root, bg=BORDER, height=1).pack(fill='x')
+
+        # ── Footer ────────────────────────────────────────────────────
+        footer = tk.Frame(root, bg=SURFACE, padx=24, pady=14)
+        footer.pack(fill='x')
 
         def perform_transform():
+            edited = result_widget.get('1.0', 'end-1c')
             try:
-                pyperclip.copy(hebrew_text)
+                pyperclip.copy(edited)
                 root.destroy()
                 time.sleep(0.25)
                 keyboard.send('delete')
                 time.sleep(0.08)
                 keyboard.send('ctrl+v')
+                # Restore original clipboard so next hotkey press can detect
+                # a new selection even if it matches the just-pasted Hebrew text.
+                time.sleep(0.15)
+                pyperclip.copy(original_clipboard)
             except Exception as e:
                 root.destroy()
                 error_root = tk.Tk()
@@ -214,20 +294,39 @@ def show_transform_menu():
             pyperclip.copy(original_clipboard)
             root.destroy()
 
-        btn_frame = tk.Frame(root)
-        btn_frame.pack(pady=6)
+        # Buttons — centered, בצע on the right
+        btn_frame = tk.Frame(footer, bg=SURFACE)
+        btn_frame.pack(anchor='center')
+
         tk.Button(
-            btn_frame, text="בצע", command=perform_transform,
-            bg='#4CAF50', fg='white', font=('Arial', 11, 'bold'),
-            padx=20, pady=4,
-        ).pack(side='left', padx=6)
+            btn_frame, text='בטל',
+            bg=SURFACE, fg=MUTED,
+            font=('Segoe UI', 10),
+            padx=20, pady=5,
+            relief='solid', bd=1,
+            highlightbackground=BORDER, highlightthickness=0,
+            cursor='hand2', command=cancel,
+            activebackground='#EEEEF2', activeforeground=TEXT_COLOR,
+        ).pack(side='left', padx=(0, 8))
+
         tk.Button(
-            btn_frame, text="בטל", command=cancel,
-            padx=20, pady=4,
-        ).pack(side='left', padx=6)
+            btn_frame, text='בצע',
+            bg=ACCENT, fg='white',
+            font=('Segoe UI', 10, 'bold'),
+            padx=20, pady=5,
+            relief='flat', bd=0,
+            cursor='hand2', command=perform_transform,
+            activebackground=ACCENT_DK, activeforeground='white',
+        ).pack(side='left')
 
         root.bind('<Return>', lambda e: perform_transform())
         root.bind('<Escape>', lambda e: cancel())
+
+        root.update_idletasks()
+        h = root.winfo_reqheight()
+        x = (root.winfo_screenwidth()  // 2) - (WIN_W // 2)
+        y = (root.winfo_screenheight() // 2) - (h // 2)
+        root.geometry(f'{WIN_W}x{h}+{x}+{y}')
 
         root.mainloop()
 
